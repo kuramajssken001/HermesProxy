@@ -150,14 +150,16 @@ namespace HermesProxy.World.Server
             packet.WriteGuid(playerLogin.Guid.To64());
             SendPacketToServer(packet);
 
-
             // Send HermesProxy version to the server via dedicated custom opcode.
             // Required: the server only sends threat packets (SMSG_THREAT_* 0x425-0x428)
             // to sessions that announced a HermesProxy version.
-            WorldPacket versionPacket = new WorldPacket(Opcode.CMSG_HERMES_VERSION);
-            versionPacket.WriteCString(GitVersionInformation.MajorMinorPatch);
-            SendPacketToServer(versionPacket);
-            Log.Print(LogType.Server, $"Sent CMSG_HERMES_VERSION '{GitVersionInformation.MajorMinorPatch}' to server");
+            // Disabled: servers that do not support CMSG_HERMES_VERSION (0x424) close the
+            // socket right after receiving it, causing a disconnect on the "Enter World" step.
+            // Re-enable only when the target server is known to implement the wowhc threat extension.
+            //WorldPacket versionPacket = new WorldPacket(Opcode.CMSG_HERMES_VERSION);
+            //versionPacket.WriteCString(GitVersionInformation.MajorMinorPatch);
+            //SendPacketToServer(versionPacket);
+            //Log.Print(LogType.Server, $"Sent CMSG_HERMES_VERSION '{GitVersionInformation.MajorMinorPatch}' to server");
         }
 
         [PacketHandler(Opcode.CMSG_LOGOUT_REQUEST)]
