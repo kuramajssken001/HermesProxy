@@ -639,35 +639,21 @@ namespace HermesProxy.World.Client
                 return;
             }
 
-            // Detect unanswered pings BEFORE sending the next one — this is the earliest in-process
-            // signal that the TCP connection is half-open (NAT timeout / ISP routing flap / silent server stall).
-            uint priorPlain = _keepAlivePingSerial; // last sent (plain), 0 on first call
-            uint pongPlain = _lastKeepAlivePongSerialPlain;
-            long outstanding = priorPlain > pongPlain ? priorPlain - pongPlain : 0;
-            if (outstanding >= 1 && priorPlain != 0)
-            {
-                long sincePong = _lastKeepAlivePongTickMs == 0 ? -1 : Environment.TickCount64 - _lastKeepAlivePongTickMs;
-                long sinceRecv = _lastReceivedTickMs == 0 ? -1 : Environment.TickCount64 - _lastReceivedTickMs;
-                // LogType.Error so it survives ErrorOnlyMode (release without a debugger). This is the
-                // earliest in-process signal of a half-open TCP — we want it in launcher.log.
-                Log.Print(LogType.Error,
-                    $"(KEEPALIVE) Backend has not PONGed our last {outstanding} ping(s). " +
-                    $"sinceLastPong={sincePong}ms, sinceLastRecvAny={sinceRecv}ms, lastOpcodeRecv={_lastReceivedOpcode}. " +
-                    $"Connection may be stalled — TCP recv will time out next.");
-            }
+            // Vanilla (cmangos/vmangos) servers do not reply to PING packets whose serial has the
+            // 0x80000000 bit set — they treat it as an out-of-sequence ping and silently drop it.
+            // Sending such pings every 30s therefore accumulates unanswered "keep-alive" pings that
+            // will never get a PONG, producing endless false "connection may be stalled" warnings.
+            //
+            // Worse: some server builds enforce a maximum number of unanswered pings per session and,
+            // once exceeded, stop processing movement/heartbeat packets for that player — which is the
+            // "character freezes and won't move until relog" symptom seen after ~1h of play.
+            //
+            // Fix: don't send proxy-originated keep-alive pings at all. The modern client already sends
+            // CMSG_PING periodically (forwarded via SendPing), and the steady stream of SMSG_* game
+            // packets is a better liveness signal than a synthetic ping that the server ignores.
 
-            _keepAlivePingSerial++;
-            uint serial = _keepAlivePingSerial | 0x80000000u;
-            _lastKeepAlivePingSentTickMs = Environment.TickCount64;
-
-            // Rolling heartbeat snapshot — gives us a periodic data point even when nothing is wrong,
-            // so post-incident logs show what "healthy" looked like seconds before the DC.
-            Log.Print(LogType.Debug, $"(KEEPALIVE) Sending keep-alive PING to backend (serial=0x{serial:X8}). {GetDiagSnapshot()}");
-
-            WorldPacket packet = new WorldPacket(Opcode.CMSG_PING);
-            packet.WriteUInt32(serial);
-            packet.WriteUInt32(0);
-            SendPacket(packet);
+            long sinceRecv = _lastReceivedTickMs == 0 ? -1 : Environment.TickCount64 - _lastReceivedTickMs;
+            Log.Print(LogType.Debug, $"(KEEPALIVE) Backend liveness check: sinceLastRecvAny={sinceRecv}ms, lastOpcodeRecv={_lastReceivedOpcode}. {GetDiagSnapshot()}");
         }
 
         public void InitializePacketHandlers()
